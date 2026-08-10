@@ -9,7 +9,7 @@ A three-line status bar for Claude Code:
 ## Install as a plugin (recommended)
 
 ```
-/plugin marketplace add LipiTechnology/clade-code-statusbar
+/plugin marketplace add LipiTechnology/claude-code-statusbar
 /plugin install claude-status-bar@claude-status-bar
 ```
 
