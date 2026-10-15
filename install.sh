@@ -13,11 +13,25 @@ cp "$src_dir/statusline-command.sh" "$script"
 chmod +x "$script"
 echo "Installed $script"
 
-# Pin the config dir if custom, so the script finds the right account file/cache.
-if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
-  cmd="CLAUDE_CONFIG_DIR=\"$CLAUDE_CONFIG_DIR\" bash \"$script\""
+# Windows (Git Bash): write forward-slash paths; backslashes get eaten when the
+# command runs.
+cmd_script="$script"
+config_dir="${CLAUDE_CONFIG_DIR:-}"
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*)
+    if command -v cygpath >/dev/null 2>&1; then
+      cmd_script="$(cygpath -m "$script")"
+      [ -n "$config_dir" ] && config_dir="$(cygpath -m "$config_dir")"
+    fi
+    ;;
+esac
+
+# Pass the config dir if custom, so the script finds the right account file/cache.
+# An argument, not a `VAR=... bash` prefix, which PowerShell can't run.
+if [ -n "$config_dir" ]; then
+  cmd="bash \"$cmd_script\" \"$config_dir\""
 else
-  cmd="bash \"$script\""
+  cmd="bash \"$cmd_script\""
 fi
 
 # Wire up settings.json -> statusLine.command, preserving existing settings.

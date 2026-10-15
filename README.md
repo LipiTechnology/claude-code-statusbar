@@ -32,3 +32,6 @@ the `statusLine` key from `~/.claude/settings.json`.
 
 `git` for the branch/dot line; `jq` **or** `python3` for parsing. All are
 optional — missing tools degrade to placeholders, never an error.
+
+On Windows, [Git for Windows](https://gitforwindows.org/) (Git Bash) is
+required: the status bar is a Bash script and won't run without `bash`.

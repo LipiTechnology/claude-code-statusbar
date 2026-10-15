@@ -8,7 +8,7 @@ script="$dest_dir/statusline-command.sh"
 settings="$dest_dir/settings.json"
 cache="$dest_dir/statusline-cache.sh"
 
-rm -f "$script" "$cache" && echo "Removed $script"
+rm -f "$script" "$cache" && rm -rf "$dest_dir/statusline-cache.d" && echo "Removed $script"
 
 # Drop statusLine from settings.json, preserving everything else.
 if [ -f "$settings" ] && command -v jq >/dev/null 2>&1; then

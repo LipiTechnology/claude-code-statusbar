@@ -15,7 +15,26 @@
 
 input=$(cat)
 
+# Optional first argument: the Claude config dir. Passed as an argument rather
+# than a `CLAUDE_CONFIG_DIR=... bash ...` prefix because Windows may run the
+# statusLine command through PowerShell, where that prefix isn't valid syntax.
+[ -n "${1:-}" ] && CLAUDE_CONFIG_DIR="$1"
+
 # ---- helpers ----------------------------------------------------------
+
+# Find a Python that actually runs. `command -v` alone isn't enough: on Windows
+# `python3` is often the Microsoft Store stub, which exists on PATH but fails.
+# Only called when jq is missing, so the probe costs nothing in the common case.
+py=()
+find_python() {
+  [ "${#py[@]}" -gt 0 ] && return 0
+  local c
+  for c in python3 python; do
+    command -v "$c" >/dev/null 2>&1 && "$c" -c '' >/dev/null 2>&1 && { py=("$c"); return 0; }
+  done
+  command -v py >/dev/null 2>&1 && py -3 -c '' >/dev/null 2>&1 && { py=(py -3); return 0; }
+  return 1
+}
 
 # True if $1 looks like a plain (optionally decimal, optionally signed) number.
 is_num() {
@@ -174,21 +193,46 @@ fi
 if [ -z "$cache_dir" ] && [ -n "$script_dir" ] && [ -w "$script_dir" ]; then
   cache_dir="$script_dir"
 fi
-[ -z "$cache_dir" ] && cache_dir="${TMPDIR:-/tmp}"
-cache_file="$cache_dir/statusline-cache.sh"
+if [ -n "$cache_dir" ]; then
+  cache_base="$cache_dir/statusline-cache"
+else
+  # The temp dir is shared by every account, so key the file names by config
+  # dir — otherwise one account's usage would show up in another's bar.
+  cache_dir="${TMPDIR:-/tmp}"
+  cache_key=$(printf '%s' "$config_dir" | cksum 2>/dev/null | cut -d' ' -f1)
+  cache_base="$cache_dir/statusline-cache-${cache_key:-0}"
+fi
+# Rate limits belong to the account, so one file per config dir. Context usage
+# belongs to a single session, so it lives in a per-session file under .d/ —
+# a shared file would show one session's context in another session's bar.
+cache_file="$cache_base.sh"
+ctx_cache_dir="$cache_base.d"
 
-# Read a single key out of the cache file, if it exists, without sourcing it
+# Read a single key out of a cache file, if it exists, without sourcing it
 # (so a stray/foreign file can never inject arbitrary variables into this
 # script's scope). Values are stored %q-quoted, so `eval` only ever expands
 # a quoted string literal, never a variable name from the file.
 cache_get() {
-  local key="$1" line val=""
-  [ -r "$cache_file" ] || { printf ''; return 0; }
-  line=$(grep -m1 "^${key}=" "$cache_file" 2>/dev/null)
+  local file="$1" key="$2" line val=""
+  [ -r "$file" ] || { printf ''; return 0; }
+  line=$(grep -m1 "^${key}=" "$file" 2>/dev/null)
   [ -z "$line" ] && { printf ''; return 0; }
   val="${line#*=}"
   eval "val=$val" 2>/dev/null
   printf '%s' "$val"
+}
+
+# Atomically write key=value pairs to a cache file, values %q-quoted.
+cache_put() {
+  local file="$1" tmp kv q
+  shift
+  tmp=$(mktemp "${file}.XXXXXX" 2>/dev/null) || return 0
+  {
+    for kv in "$@"; do
+      printf -v q '%q' "${kv#*=}"
+      printf '%s=%s\n' "${kv%%=*}" "$q"
+    done
+  } > "$tmp" 2>/dev/null && mv -f "$tmp" "$file" 2>/dev/null || rm -f "$tmp" 2>/dev/null
 }
 
 # ---- gather data --------------------------------------------------------
@@ -198,7 +242,7 @@ cache_get() {
 # erroring out.
 
 model="" dir="" five_pct="" five_reset="" week_pct="" week_reset=""
-ctx_pct="" ctx_used="" ctx_size="" effort="" thinking="" style=""
+ctx_pct="" ctx_used="" ctx_size="" effort="" thinking="" style="" session_id=""
 
 json_lines=""
 if command -v jq >/dev/null 2>&1; then
@@ -214,14 +258,17 @@ if command -v jq >/dev/null 2>&1; then
     (.context_window.context_window_size // ""),
     (.effort.level // "medium"),
     (if .thinking.enabled == true then "on" else "off" end),
-    (.output_style.name // "default")
+    (.output_style.name // "default"),
+    (.session_id // "")
   ' 2>/dev/null)
-elif command -v python3 >/dev/null 2>&1; then
-  json_lines=$(printf '%s' "$input" | python3 -c '
+elif find_python; then
+  # Read/write raw UTF-8 bytes: on Windows Python defaults to cp1252, which
+  # crashes on non-ASCII payloads and prints CRLF line endings.
+  json_lines=$(printf '%s' "$input" | "${py[@]}" -c '
 import json, sys
 
 try:
-    d = json.load(sys.stdin)
+    d = json.loads(sys.stdin.buffer.read().decode("utf-8", "replace"))
 except Exception:
     d = {}
 
@@ -233,7 +280,7 @@ def g(*path, default=""):
         v = v[k]
     return default if v is None else v
 
-for f in [
+fields = [
     g("model", "display_name", default="Model"),
     g("workspace", "current_dir", default=""),
     g("rate_limits", "five_hour", "used_percentage", default=""),
@@ -246,16 +293,18 @@ for f in [
     g("effort", "level", default="medium"),
     "on" if g("thinking", "enabled", default=False) is True else "off",
     g("output_style", "name", default="default"),
-]:
-    print(f)
+    g("session_id", default=""),
+]
+sys.stdout.buffer.write("".join("%s\n" % f for f in fields).encode("utf-8"))
 ' 2>/dev/null)
 fi
 
 if [ -n "$json_lines" ]; then
   # Read line-by-line instead of mapfile: macOS ships bash 3.2, which has no
-  # mapfile builtin, and this script must run under /bin/bash there.
+  # mapfile builtin, and this script must run under /bin/bash there. Strip a
+  # trailing CR: jq on Windows ends lines with CRLF, and "42\r" isn't a number.
   _fields=()
-  while IFS= read -r _fline; do _fields+=("$_fline"); done <<< "$json_lines"
+  while IFS= read -r _fline; do _fields+=("${_fline%$'\r'}"); done <<< "$json_lines"
   model="${_fields[0]:-}"
   dir="${_fields[1]:-}"
   five_pct="${_fields[2]:-}"
@@ -268,11 +317,13 @@ if [ -n "$json_lines" ]; then
   effort="${_fields[9]:-}"
   thinking="${_fields[10]:-}"
   style="${_fields[11]:-}"
+  session_id="${_fields[12]:-}"
 fi
 
 [ -z "$model" ] && model="Model"
 [ -z "$dir" ] && dir="$PWD"
-project=$(basename "$dir")
+# Normalise Windows backslashes so basename finds the last path component.
+project=$(basename "${dir//\\//}")
 
 [ -z "$effort" ] && effort="medium"
 [ -z "$thinking" ] && thinking="off"
@@ -285,27 +336,56 @@ project=$(basename "$dir")
 # back to whatever was last cached (if anything) so the bars don't flash
 # "n/a" on every render, then persist whatever we ended up with for next
 # time. Works even if the cache file has never existed before.
+#
+# Values are restored as whole groups (a percentage with its reset time; the
+# three context fields together), never field-by-field, so a live value is
+# never paired with a stale cached one. A rate-limit window whose reset time
+# has passed is dropped: Claude Code stops sending it at that point, and
+# restoring it would show an expired usage figure as current.
 
-is_num "$five_pct" || five_pct="$(cache_get five_pct)"
-is_num "$five_reset" || five_reset="$(cache_get five_reset)"
-is_num "$week_pct" || week_pct="$(cache_get week_pct)"
-is_num "$week_reset" || week_reset="$(cache_get week_reset)"
-is_num "$ctx_pct" || ctx_pct="$(cache_get ctx_pct)"
-is_num "$ctx_used" || ctx_used="$(cache_get ctx_used)"
-is_num "$ctx_size" || ctx_size="$(cache_get ctx_size)"
+now=$(date +%s 2>/dev/null)
+is_num "$now" || now=0
 
-if [ -n "$five_pct$week_pct$ctx_pct" ]; then
-  cache_tmp=$(mktemp "${cache_file}.XXXXXX" 2>/dev/null)
-  if [ -n "$cache_tmp" ]; then
-    {
-      printf 'five_pct=%s\n' "$(printf '%q' "$five_pct")"
-      printf 'five_reset=%s\n' "$(printf '%q' "$five_reset")"
-      printf 'week_pct=%s\n' "$(printf '%q' "$week_pct")"
-      printf 'week_reset=%s\n' "$(printf '%q' "$week_reset")"
-      printf 'ctx_pct=%s\n' "$(printf '%q' "$ctx_pct")"
-      printf 'ctx_used=%s\n' "$(printf '%q' "$ctx_used")"
-      printf 'ctx_size=%s\n' "$(printf '%q' "$ctx_size")"
-    } > "$cache_tmp" 2>/dev/null && mv -f "$cache_tmp" "$cache_file" 2>/dev/null
+# Restore one rate-limit window (five / week) from the cache if the payload
+# didn't carry it and the cached window hasn't reset yet.
+restore_window() {
+  local name="$1" pct reset c_pct c_reset
+  eval "pct=\$${name}_pct"
+  is_num "$pct" && return 0
+  c_pct=$(cache_get "$cache_file" "${name}_pct")
+  c_reset=$(cache_get "$cache_file" "${name}_reset")
+  is_num "$c_pct" && is_num "$c_reset" || return 0
+  [ "${c_reset%%.*}" -gt "$now" ] 2>/dev/null || return 0
+  eval "${name}_pct=\$c_pct ${name}_reset=\$c_reset"
+}
+
+rl_live=""
+{ is_num "$five_pct" || is_num "$week_pct"; } && rl_live=1
+restore_window five
+restore_window week
+[ -n "$rl_live" ] && cache_put "$cache_file" \
+  "five_pct=$five_pct" "five_reset=$five_reset" \
+  "week_pct=$week_pct" "week_reset=$week_reset"
+
+# Context: per-session file, keyed by a sanitised session_id (so it can't
+# escape the cache dir). No session_id means no context caching at all.
+sid="${session_id//[^A-Za-z0-9_-]/}"
+if [ -n "$sid" ]; then
+  ctx_cache="$ctx_cache_dir/$sid.sh"
+  if is_num "$ctx_pct" && is_num "$ctx_used" && is_num "$ctx_size"; then
+    if [ ! -f "$ctx_cache" ]; then
+      # New session: create the dir and prune files from long-gone sessions.
+      mkdir -p "$ctx_cache_dir" 2>/dev/null
+      find "$ctx_cache_dir" -type f -name '*.sh' -mtime +7 -delete 2>/dev/null
+    fi
+    cache_put "$ctx_cache" "ctx_pct=$ctx_pct" "ctx_used=$ctx_used" "ctx_size=$ctx_size"
+  else
+    c_pct=$(cache_get "$ctx_cache" ctx_pct)
+    c_used=$(cache_get "$ctx_cache" ctx_used)
+    c_size=$(cache_get "$ctx_cache" ctx_size)
+    if is_num "$c_pct" && is_num "$c_used" && is_num "$c_size"; then
+      ctx_pct="$c_pct" ctx_used="$c_used" ctx_size="$c_size"
+    fi
   fi
 fi
 
@@ -349,17 +429,17 @@ if [ -n "$claude_json" ] && [ -r "$claude_json" ]; then
   org_name="" email_addr="" acct_lines=""
   if command -v jq >/dev/null 2>&1; then
     acct_lines=$(jq -r '(.oauthAccount.organizationName // ""), (.oauthAccount.emailAddress // "")' "$claude_json" 2>/dev/null)
-  elif command -v python3 >/dev/null 2>&1; then
-    acct_lines=$(python3 -c '
+  elif find_python; then
+    acct_lines=$("${py[@]}" -c '
 import json, sys
 try:
-    with open(sys.argv[1]) as fh:
+    with open(sys.argv[1], encoding="utf-8-sig") as fh:
         d = json.load(fh)
 except Exception:
     d = {}
 oauth = d.get("oauthAccount") or {}
-print(oauth.get("organizationName") or "")
-print(oauth.get("emailAddress") or "")
+out = "%s\n%s\n" % (oauth.get("organizationName") or "", oauth.get("emailAddress") or "")
+sys.stdout.buffer.write(out.encode("utf-8"))
 ' "$claude_json" 2>/dev/null)
   else
     # Last-resort grep/sed fallback when neither jq nor python3 is available.
@@ -371,7 +451,7 @@ print(oauth.get("emailAddress") or "")
   if [ -n "$acct_lines" ]; then
     # bash-3.2-safe (no mapfile on macOS's /bin/bash).
     _acct_fields=()
-    while IFS= read -r _aline; do _acct_fields+=("$_aline"); done <<< "$acct_lines"
+    while IFS= read -r _aline; do _acct_fields+=("${_aline%$'\r'}"); done <<< "$acct_lines"
     org_name="${_acct_fields[0]:-}"
     email_addr="${_acct_fields[1]:-}"
   fi
@@ -428,7 +508,10 @@ if command -v git >/dev/null 2>&1 && git --no-optional-locks -C "$dir" rev-parse
   # ponytail: 1s wall-clock cap, per-dir TTL cache if the dropped dot on slow mounts matters
   _st=$(mktemp)
   ( git --no-optional-locks -C "$dir" status --porcelain 2>/dev/null >"$_st" ) & _gp=$!
-  ( sleep 1; kill "$_gp" 2>/dev/null ) & _kp=$!
+  # The watcher's fds go to /dev/null: killing it orphans its `sleep 1`, and if
+  # that still held our stdout Claude Code would wait a full second for EOF on
+  # every render — long enough that the next update cancels it mid-run.
+  ( sleep 1; kill "$_gp" 2>/dev/null ) </dev/null >/dev/null 2>&1 & _kp=$!
   disown "$_kp" 2>/dev/null
   if wait "$_gp" 2>/dev/null; then
     kill "$_kp" 2>/dev/null
