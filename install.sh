@@ -38,16 +38,16 @@ fi
 if command -v jq >/dev/null 2>&1; then
   tmp="$(mktemp)"
   if [ -f "$settings" ]; then
-    jq --arg c "$cmd" '.statusLine = {type:"command", command:$c, refreshInterval:1}' "$settings" >"$tmp"
+    jq --arg c "$cmd" '.statusLine = {type:"command", command:$c, refreshInterval:30}' "$settings" >"$tmp"
   else
-    jq -n --arg c "$cmd" '{statusLine:{type:"command", command:$c, refreshInterval:1}}' >"$tmp"
+    jq -n --arg c "$cmd" '{statusLine:{type:"command", command:$c, refreshInterval:30}}' >"$tmp"
   fi
   mv "$tmp" "$settings"
   echo "Configured $settings"
 else
   # ponytail: no jq -> can't safely merge JSON, tell the user the one line to add.
   echo "jq not found. Add this to $settings manually:"
-  echo "  \"statusLine\": { \"type\": \"command\", \"command\": \"$cmd\", \"refreshInterval\": 1 }"
+  echo "  \"statusLine\": { \"type\": \"command\", \"command\": \"$cmd\", \"refreshInterval\": 30 }"
 fi
 
 echo "Done. Restart Claude Code or run /statusline to see it."

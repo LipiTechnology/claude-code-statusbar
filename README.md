@@ -28,6 +28,33 @@ the `statusLine` key from `~/.claude/settings.json`.
 ./uninstall.sh   # reverses it
 ```
 
+## Customize
+
+**Plugin installs:** `/plugin` → **Installed** → Claude Status Bar →
+**Configure options** (the same toggles also appear in `/config`). Changes
+show within 30 seconds, no restart.
+
+**Any install:** create `statusline.conf` in your Claude config dir (`~/.claude`, or
+`$CLAUDE_CONFIG_DIR`) with one line listing the parts to hide:
+
+```
+hide=weekly,reset,icons
+```
+
+| Name | Hides |
+|------|-------|
+| `five_hour` | 5-hour usage bar |
+| `weekly` | weekly usage bar |
+| `model` | model name + context bar |
+| `reset` | reset times |
+| `bars` | the bars themselves (shows plain `42%` instead) |
+| `icons` | all icons |
+| `account` | account / org label |
+| `git` | branch + clean/dirty dot |
+| `effort` | the effort / thinking / style line |
+
+Both are honoured together: a part hidden in either place stays hidden.
+
 ## Requirements
 
 `git` for the branch/dot line; `jq` **or** `python3` for parsing. All are

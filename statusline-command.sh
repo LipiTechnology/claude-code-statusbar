@@ -184,6 +184,49 @@ elif [ -n "${HOME:-}" ] && [ -r "$HOME/.claude.json" ]; then
   claude_json="$HOME/.claude.json"
 fi
 
+# ---- user options -------------------------------------------------------
+# Parts to hide come from two places, and both apply:
+#  - the plugin's options (/plugin > Installed > Configure options, or
+#    /config), saved by Claude Code as show_<part>: false under
+#    pluginConfigs["claude-status-bar@<marketplace>"].options in settings.json;
+#  - an optional $config_dir/statusline.conf with one line, for any install:
+#      hide=five_hour,weekly,model,reset,bars,icons,account,git,effort
+# Read fresh on every render, so changes show on the next refresh. The conf
+# file is read with grep and everything but letters and _ becomes a separator;
+# neither file is ever sourced or eval'd.
+hide=""
+settings_json="${config_dir:+$config_dir/settings.json}"
+if [ -n "$settings_json" ] && [ -r "$settings_json" ]; then
+  if command -v jq >/dev/null 2>&1; then
+    hide=$(jq -r '.pluginConfigs // {} | to_entries[]
+      | select(.key | startswith("claude-status-bar@")) | .value.options // {}
+      | to_entries[] | select(.value == false or .value == "false")
+      | .key | ltrimstr("show_")' "$settings_json" 2>/dev/null)
+  elif find_python; then
+    hide=$("${py[@]}" -c '
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8-sig") as fh:
+        d = json.load(fh)
+except Exception:
+    d = {}
+out = []
+for k, v in ((d.get("pluginConfigs") if isinstance(d, dict) else None) or {}).items():
+    if k.startswith("claude-status-bar@") and isinstance(v, dict):
+        for o, val in (v.get("options") or {}).items():
+            if val is False or val == "false":
+                out.append(o[5:] if o.startswith("show_") else o)
+sys.stdout.buffer.write(" ".join(out).encode("utf-8"))
+' "$settings_json" 2>/dev/null)
+  fi
+  hide=$(printf '%s' "$hide" | tr -c 'a-z_' ' ')
+fi
+[ -n "$config_dir" ] && [ -r "$config_dir/statusline.conf" ] && \
+  hide="$hide $(grep -i -m1 '^[[:space:]]*hide[[:space:]]*=' "$config_dir/statusline.conf" 2>/dev/null \
+    | cut -d= -f2- | tr 'A-Z' 'a-z' | tr -c 'a-z_' ' ')"
+hide=" $hide "
+hidden() { case "$hide" in *" $1 "*) return 0 ;; esac; return 1; }
+
 cache_dir=""
 if [ -n "$config_dir" ]; then
   if [ -d "$config_dir" ] || mkdir -p "$config_dir" 2>/dev/null; then
@@ -346,24 +389,33 @@ project=$(basename "${dir//\\//}")
 now=$(date +%s 2>/dev/null)
 is_num "$now" || now=0
 
-# Restore one rate-limit window (five / week) from the cache if the payload
-# didn't carry it and the cached window hasn't reset yet.
-restore_window() {
+# Take the newer of the payload's and the cache's value for one rate-limit
+# window (five / week). Limits are per account, but a session's payload only
+# reflects its own last API response, so usage from the account's other
+# sessions arrives via the cache. Usage only rises within a window, so newer
+# means a later reset, or the same reset with a higher percentage. No clock
+# needed, and a stale session writing back can never roll the cache backwards.
+# ponytail: assumes resets_at is stable within a window (it is, round epochs);
+# compare with a tolerance if it ever starts jittering.
+merge_window() {
   local name="$1" pct reset c_pct c_reset
-  eval "pct=\$${name}_pct"
-  is_num "$pct" && return 0
+  eval "pct=\$${name}_pct reset=\$${name}_reset"
   c_pct=$(cache_get "$cache_file" "${name}_pct")
   c_reset=$(cache_get "$cache_file" "${name}_reset")
   is_num "$c_pct" && is_num "$c_reset" || return 0
   [ "${c_reset%%.*}" -gt "$now" ] 2>/dev/null || return 0
+  if is_num "$pct"; then
+    is_num "$reset" || return 0
+    [ "${c_reset%%.*}" -lt "${reset%%.*}" ] 2>/dev/null && return 0
+    [ "${c_reset%%.*}" -eq "${reset%%.*}" ] 2>/dev/null && \
+      [ "${c_pct%%.*}" -le "${pct%%.*}" ] 2>/dev/null && return 0
+  fi
   eval "${name}_pct=\$c_pct ${name}_reset=\$c_reset"
 }
 
-rl_live=""
-{ is_num "$five_pct" || is_num "$week_pct"; } && rl_live=1
-restore_window five
-restore_window week
-[ -n "$rl_live" ] && cache_put "$cache_file" \
+merge_window five
+merge_window week
+{ is_num "$five_pct" || is_num "$week_pct"; } && cache_put "$cache_file" \
   "five_pct=$five_pct" "five_reset=$five_reset" \
   "week_pct=$week_pct" "week_reset=$week_reset"
 
@@ -391,32 +443,49 @@ fi
 
 # ---- line 1: rate limits + model context usage --------------------------
 
-if is_num "$five_pct"; then
-  five_int=$(printf '%.0f' "$five_pct")
-  five_bar=$(make_bar "$five_int" 12 "${five_int}%")
-else
-  five_bar=$(make_bar 0 12 "n/a")
-fi
-five_time=$(fmt_time_of_day "$five_reset")
+# A bar, or with `bars` hidden just its label as bold text.
+bar() {
+  if hidden bars; then printf '\033[1m%s\033[0m' "$3"; else make_bar "$@"; fi
+}
 
-if is_num "$week_pct"; then
-  week_int=$(printf '%.0f' "$week_pct")
-  week_bar=$(make_bar "$week_int" 12 "${week_int}%")
-else
-  week_bar=$(make_bar 0 12 "n/a")
-fi
-week_time=$(fmt_weekday_time "$week_reset")
+# Hidden sections are skipped entirely, separators included.
+line1=""
+add1() { line1="${line1:+$line1 $(printf '\033[2m|\033[0m') }$1"; }
 
-if is_num "$ctx_pct" && is_num "$ctx_used" && is_num "$ctx_size"; then
-  ctx_int=$(printf '%.0f' "$ctx_pct")
-  ctx_label="$(fmt_tokens "$ctx_used")/$(fmt_tokens "$ctx_size")"
-  ctx_bar=$(make_bar "$ctx_int" 12 "$ctx_label")
-else
-  ctx_bar=$(make_bar 0 12 "n/a")
+if ! hidden five_hour; then
+  if is_num "$five_pct"; then
+    five_int=$(printf '%.0f' "$five_pct")
+    part=$(bar "$five_int" 12 "${five_int}%")
+  else
+    part=$(bar 0 12 "n/a")
+  fi
+  hidden reset || part+=" $(fmt_time_of_day "$five_reset")"
+  add1 "$part"
 fi
 
-line1=$(printf '%s %s \033[2m|\033[0m \033[2m🗓️\033[0m %s %s \033[2m|\033[0m \033[1m%s\033[0m %s' \
-  "$five_bar" "$five_time" "$week_bar" "$week_time" "$model" "$ctx_bar")
+if ! hidden weekly; then
+  part=""
+  hidden icons || part=$(printf '\033[2m🗓️\033[0m ')
+  if is_num "$week_pct"; then
+    week_int=$(printf '%.0f' "$week_pct")
+    part+=$(bar "$week_int" 12 "${week_int}%")
+  else
+    part+=$(bar 0 12 "n/a")
+  fi
+  hidden reset || part+=" $(fmt_weekday_time "$week_reset")"
+  add1 "$part"
+fi
+
+if ! hidden model; then
+  if is_num "$ctx_pct" && is_num "$ctx_used" && is_num "$ctx_size"; then
+    ctx_int=$(printf '%.0f' "$ctx_pct")
+    ctx_label="$(fmt_tokens "$ctx_used")/$(fmt_tokens "$ctx_size")"
+    ctx_bar=$(bar "$ctx_int" 12 "$ctx_label")
+  else
+    ctx_bar=$(bar 0 12 "n/a")
+  fi
+  add1 "$(printf '\033[1m%s\033[0m %s' "$model" "$ctx_bar")"
+fi
 
 # ---- account / org label (from ~/.claude.json, not the stdin payload) ----
 # The statusline JSON on stdin has no account/org field; that lives in
@@ -425,7 +494,7 @@ line1=$(printf '%s %s \033[2m|\033[0m \033[2m🗓️\033[0m %s %s \033[2m|\033[0
 # always derive it from $HOME.
 
 account_label=""
-if [ -n "$claude_json" ] && [ -r "$claude_json" ]; then
+if ! hidden account && [ -n "$claude_json" ] && [ -r "$claude_json" ]; then
   org_name="" email_addr="" acct_lines=""
   if command -v jq >/dev/null 2>&1; then
     acct_lines=$(jq -r '(.oauthAccount.organizationName // ""), (.oauthAccount.emailAddress // "")' "$claude_json" 2>/dev/null)
@@ -462,10 +531,12 @@ sys.stdout.buffer.write(out.encode("utf-8"))
   # as the explicit UTF-8 byte sequence (EF B8 8E) to avoid any ambiguity
   # from an invisible literal character in the source.
   vs15=$'\357\270\216'
+  org_icon="🏢${vs15} " user_icon="👤${vs15} "
+  hidden icons && org_icon="" user_icon=""
 
   if [ -n "$org_name" ]; then
     # Org account: show the org name outright, building icon.
-    account_label="🏢${vs15} $org_name"
+    account_label="${org_icon}$org_name"
   elif [ -n "$email_addr" ]; then
     # Individual account: never show the raw address — redact it to
     # "abc***@***.tld" (person icon). Anything that doesn't cleanly look
@@ -476,7 +547,7 @@ sys.stdout.buffer.write(out.encode("utf-8"))
         domain_part="${email_addr#*@}"
         tld="${domain_part##*.}"
         [ -n "$local_part" ] && [ -n "$tld" ] && \
-          account_label="👤${vs15} ${local_part:0:3}***@***.${tld}"
+          account_label="${user_icon}${local_part:0:3}***@***.${tld}"
         ;;
     esac
   fi
@@ -500,8 +571,10 @@ fi
 
 branch=""
 dot=""
-if command -v git >/dev/null 2>&1 && git --no-optional-locks -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  branch=$(git --no-optional-locks -C "$dir" branch --show-current 2>/dev/null)
+# Empty outside a repo and on a detached HEAD; the dot is only shown next to a
+# branch, so there's no point paying for `git status` in either case.
+! hidden git && command -v git >/dev/null 2>&1 && branch=$(git --no-optional-locks -C "$dir" branch --show-current 2>/dev/null)
+if [ -n "$branch" ]; then
   # `git status` stats the whole worktree — 15s+ over sshfs/fuse mounts, which
   # blows Claude Code's statusLine timeout so nothing renders. Cap at 1s; if it
   # can't finish, skip the dot (branch still shows).
@@ -524,20 +597,30 @@ if command -v git >/dev/null 2>&1 && git --no-optional-locks -C "$dir" rev-parse
   rm -f "$_st"
 fi
 
+arrow="" branch_icon=""
+hidden icons || { arrow=$(printf '\033[2m⤷\033[0m '); branch_icon=$(printf '\033[2m⎇\033[0m '); }
 if [ -n "$branch" ]; then
-  line2=$(printf '\033[2m⤷\033[0m %s\033[34m%s\033[0m \033[2m⎇\033[0m \033[33m%s\033[0m %s' "$account_part" "$user_project" "$branch" "$dot")
+  line2=$(printf '%s%s\033[34m%s\033[0m %s\033[33m%s\033[0m %s' "$arrow" "$account_part" "$user_project" "$branch_icon" "$branch" "$dot")
 else
-  line2=$(printf '\033[2m⤷\033[0m %s\033[34m%s\033[0m' "$account_part" "$user_project")
+  line2=$(printf '%s%s\033[34m%s\033[0m' "$arrow" "$account_part" "$user_project")
 fi
 
 # ---- line 3: effort / thinking / output style ----------------------------
 # One consistent colour (blue) across the entire line, rather than mixing
 # a coloured label with greyed-out values.
 
-line3=$(printf '\033[38;5;111m⚙ effort:%s · think:%s · style:%s\033[0m' \
-  "$effort" "$thinking" "$style")
+line3=""
+if ! hidden effort; then
+  gear="⚙ "
+  hidden icons && gear=""
+  line3=$(printf '\033[38;5;111m%seffort:%s · think:%s · style:%s\033[0m' \
+    "$gear" "$effort" "$thinking" "$style")
+fi
 
 # ---- output ---------------------------------------------------------------
 
-printf '%s\n%s\n%s\n' "$line1" "$line2" "$line3"
+# Skip lines whose every section is hidden rather than print blank rows.
+for l in "$line1" "$line2" "$line3"; do
+  [ -n "$l" ] && printf '%s\n' "$l"
+done
 

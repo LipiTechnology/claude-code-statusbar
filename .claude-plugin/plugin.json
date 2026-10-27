@@ -1,7 +1,7 @@
 {
   "name": "claude-status-bar",
   "displayName": "Claude Status Bar",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "description": "Three-line status bar: rate-limit bars with reset times, project/branch/git dot, and effort/thinking/output-style.",
   "author": {
     "name": "Bikram Lama",
@@ -15,5 +15,61 @@
     "status-bar",
     "rate-limits",
     "context"
-  ]
+  ],
+  "userConfig": {
+    "show_five_hour": {
+      "type": "boolean",
+      "title": "Show: 5-hour usage bar",
+      "description": "Show the 5-hour usage bar in the status bar. Applies within 30 seconds.",
+      "default": true
+    },
+    "show_weekly": {
+      "type": "boolean",
+      "title": "Show: Weekly usage bar",
+      "description": "Show the weekly usage bar in the status bar. Applies within 30 seconds.",
+      "default": true
+    },
+    "show_model": {
+      "type": "boolean",
+      "title": "Show: Model name and context bar",
+      "description": "Show the model name and context bar in the status bar. Applies within 30 seconds.",
+      "default": true
+    },
+    "show_reset": {
+      "type": "boolean",
+      "title": "Show: Reset times",
+      "description": "Show the reset times in the status bar. Applies within 30 seconds.",
+      "default": true
+    },
+    "show_bars": {
+      "type": "boolean",
+      "title": "Show: Bars (off shows plain percentages)",
+      "description": "Show the bars (off shows plain percentages) in the status bar. Applies within 30 seconds.",
+      "default": true
+    },
+    "show_icons": {
+      "type": "boolean",
+      "title": "Show: Icons",
+      "description": "Show the icons in the status bar. Applies within 30 seconds.",
+      "default": true
+    },
+    "show_account": {
+      "type": "boolean",
+      "title": "Show: Account / org label",
+      "description": "Show the account / org label in the status bar. Applies within 30 seconds.",
+      "default": true
+    },
+    "show_git": {
+      "type": "boolean",
+      "title": "Show: Git branch and clean/dirty dot",
+      "description": "Show the git branch and clean/dirty dot in the status bar. Applies within 30 seconds.",
+      "default": true
+    },
+    "show_effort": {
+      "type": "boolean",
+      "title": "Show: Effort / thinking / style line",
+      "description": "Show the effort / thinking / style line in the status bar. Applies within 30 seconds.",
+      "default": true
+    }
+  }
 }

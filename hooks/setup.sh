@@ -79,10 +79,10 @@ sl = data.get("statusLine")
 # current one (config dir argument + refreshInterval) without ever clobbering
 # a status line the user set up themselves.
 if not isinstance(sl, dict):
-    data["statusLine"] = {"type": "command", "command": cmd, "refreshInterval": 1}
-elif isinstance(sl.get("command"), str) and any(s in sl["command"] for s in scripts) and (sl.get("command") != cmd or sl.get("refreshInterval") != 1):
+    data["statusLine"] = {"type": "command", "command": cmd, "refreshInterval": 30}
+elif isinstance(sl.get("command"), str) and any(s in sl["command"] for s in scripts) and (sl.get("command") != cmd or sl.get("refreshInterval") != 30):
     sl["command"] = cmd
-    sl["refreshInterval"] = 1
+    sl["refreshInterval"] = 30
 else:
     sys.exit(0)
 os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -94,7 +94,7 @@ PY
 fi
 
 if [ -z "$done" ] && command -v jq >/dev/null 2>&1; then
-  filter='if (.statusLine|type)!="object" then .statusLine={type:"command",command:$c,refreshInterval:1} elif (.statusLine.command|type)=="string" and ((.statusLine.command|contains($s)) or (.statusLine.command|contains($r))) then .statusLine.command=$c | .statusLine.refreshInterval=1 else . end'
+  filter='if (.statusLine|type)!="object" then .statusLine={type:"command",command:$c,refreshInterval:30} elif (.statusLine.command|type)=="string" and ((.statusLine.command|contains($s)) or (.statusLine.command|contains($r))) then .statusLine.command=$c | .statusLine.refreshInterval=30 else . end'
   tmp="$(mktemp)" || exit 0
   if [ -f "$settings" ]; then
     # jq fails on an unparseable file, so nothing is written in that case.
