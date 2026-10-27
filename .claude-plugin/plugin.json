@@ -1,7 +1,7 @@
 {
   "name": "claude-status-bar",
   "displayName": "Claude Status Bar",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "description": "Three-line status bar: rate-limit bars with reset times, project/branch/git dot, and effort/thinking/output-style.",
   "author": {
     "name": "Bikram Lama",
@@ -17,58 +17,85 @@
     "context"
   ],
   "userConfig": {
-    "show_five_hour": {
+    "five_hour": {
+      "type": "string",
+      "title": "5-hour usage",
+      "description": "bar: progress bar · compact: just the percentage · off: hidden",
+      "options": [
+        "bar",
+        "compact",
+        "off"
+      ],
+      "default": "bar"
+    },
+    "five_hour_reset": {
       "type": "boolean",
-      "title": "Show: 5-hour usage bar",
-      "description": "Show the 5-hour usage bar in the status bar. Applies within 30 seconds.",
+      "title": "5-hour reset time",
+      "description": "Show when the 5-hour window resets",
       "default": true
     },
-    "show_weekly": {
+    "weekly": {
+      "type": "string",
+      "title": "Weekly usage",
+      "description": "bar: progress bar · compact: just the percentage · off: hidden",
+      "options": [
+        "bar",
+        "compact",
+        "off"
+      ],
+      "default": "bar"
+    },
+    "weekly_reset": {
       "type": "boolean",
-      "title": "Show: Weekly usage bar",
-      "description": "Show the weekly usage bar in the status bar. Applies within 30 seconds.",
+      "title": "Weekly reset time",
+      "description": "Show when the weekly window resets",
       "default": true
     },
-    "show_model": {
+    "model_name": {
       "type": "boolean",
-      "title": "Show: Model name and context bar",
-      "description": "Show the model name and context bar in the status bar. Applies within 30 seconds.",
+      "title": "Model name",
+      "description": "Show the model name",
       "default": true
     },
-    "show_reset": {
+    "context": {
+      "type": "string",
+      "title": "Model context",
+      "description": "bar: progress bar · compact: just used/total tokens · off: hidden",
+      "options": [
+        "bar",
+        "compact",
+        "off"
+      ],
+      "default": "bar"
+    },
+    "account": {
       "type": "boolean",
-      "title": "Show: Reset times",
-      "description": "Show the reset times in the status bar. Applies within 30 seconds.",
+      "title": "Account / org",
+      "description": "Show the org name, or your redacted email on a personal account",
       "default": true
     },
-    "show_bars": {
+    "project": {
       "type": "boolean",
-      "title": "Show: Bars (off shows plain percentages)",
-      "description": "Show the bars (off shows plain percentages) in the status bar. Applies within 30 seconds.",
+      "title": "User and project",
+      "description": "Show user:project",
       "default": true
     },
-    "show_icons": {
+    "git": {
       "type": "boolean",
-      "title": "Show: Icons",
-      "description": "Show the icons in the status bar. Applies within 30 seconds.",
+      "title": "Git branch and dirty status",
+      "description": "Show the branch and the clean/dirty dot",
       "default": true
     },
-    "show_account": {
+    "effort": {
       "type": "boolean",
-      "title": "Show: Account / org label",
-      "description": "Show the account / org label in the status bar. Applies within 30 seconds.",
+      "title": "Effort line",
+      "description": "Show the effort / thinking / output style line",
       "default": true
     },
-    "show_git": {
+    "icons": {
       "type": "boolean",
-      "title": "Show: Git branch and clean/dirty dot",
-      "description": "Show the git branch and clean/dirty dot in the status bar. Applies within 30 seconds.",
-      "default": true
-    },
-    "show_effort": {
-      "type": "boolean",
-      "title": "Show: Effort / thinking / style line",
-      "description": "Show the effort / thinking / style line in the status bar. Applies within 30 seconds.",
+      "title": "Icons",
+      "description": "Show icons",
       "default": true
     }
   }

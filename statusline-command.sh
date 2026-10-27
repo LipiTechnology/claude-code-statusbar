@@ -185,25 +185,29 @@ elif [ -n "${HOME:-}" ] && [ -r "$HOME/.claude.json" ]; then
 fi
 
 # ---- user options -------------------------------------------------------
-# Parts to hide come from two places, and both apply:
+# Every section is on by default. Two sources, both applied:
 #  - the plugin's options (/plugin > Installed > Configure options, or
-#    /config), saved by Claude Code as show_<part>: false under
-#    pluginConfigs["claude-status-bar@<marketplace>"].options in settings.json;
-#  - an optional $config_dir/statusline.conf with one line, for any install:
-#      hide=five_hour,weekly,model,reset,bars,icons,account,git,effort
-# Read fresh on every render, so changes show on the next refresh. The conf
-# file is read with grep and everything but letters and _ becomes a separator;
-# neither file is ever sourced or eval'd.
-hide=""
+#    /config), saved by Claude Code under
+#    pluginConfigs["claude-status-bar@<marketplace>"].options in settings.json:
+#    false or "off" hides a section, "compact" shows a bar as plain text;
+#  - an optional $config_dir/statusline.conf, for any install:
+#      hide=weekly_reset,account
+#      compact=five_hour,context
+# Section names: five_hour, five_hour_reset, weekly, weekly_reset, model_name,
+# context, account, project, git, effort, icons. Read fresh on every render,
+# so changes show on the next refresh. Neither file is sourced or eval'd, and
+# everything but letters and _ in a value becomes a separator.
+hide="" compact="" opt_lines=""
 settings_json="${config_dir:+$config_dir/settings.json}"
 if [ -n "$settings_json" ] && [ -r "$settings_json" ]; then
   if command -v jq >/dev/null 2>&1; then
-    hide=$(jq -r '.pluginConfigs // {} | to_entries[]
+    opt_lines=$(jq -r '.pluginConfigs // {} | to_entries[]
       | select(.key | startswith("claude-status-bar@")) | .value.options // {}
-      | to_entries[] | select(.value == false or .value == "false")
-      | .key | ltrimstr("show_")' "$settings_json" 2>/dev/null)
+      | to_entries[]
+      | if .value == false or .value == "false" or .value == "off" then "hide \(.key)"
+        elif .value == "compact" then "compact \(.key)" else empty end' "$settings_json" 2>/dev/null)
   elif find_python; then
-    hide=$("${py[@]}" -c '
+    opt_lines=$("${py[@]}" -c '
 import json, sys
 try:
     with open(sys.argv[1], encoding="utf-8-sig") as fh:
@@ -214,18 +218,29 @@ out = []
 for k, v in ((d.get("pluginConfigs") if isinstance(d, dict) else None) or {}).items():
     if k.startswith("claude-status-bar@") and isinstance(v, dict):
         for o, val in (v.get("options") or {}).items():
-            if val is False or val == "false":
-                out.append(o[5:] if o.startswith("show_") else o)
-sys.stdout.buffer.write(" ".join(out).encode("utf-8"))
+            if val is False or val in ("false", "off"):
+                out.append("hide %s\n" % o)
+            elif val == "compact":
+                out.append("compact %s\n" % o)
+sys.stdout.buffer.write("".join(out).encode("utf-8"))
 ' "$settings_json" 2>/dev/null)
   fi
-  hide=$(printf '%s' "$hide" | tr -c 'a-z_' ' ')
+  while read -r _kind _key; do
+    case "$_kind" in
+      hide) hide="$hide $_key" ;;
+      compact) compact="$compact $_key" ;;
+    esac
+  done <<< "$opt_lines"
 fi
-[ -n "$config_dir" ] && [ -r "$config_dir/statusline.conf" ] && \
-  hide="$hide $(grep -i -m1 '^[[:space:]]*hide[[:space:]]*=' "$config_dir/statusline.conf" 2>/dev/null \
-    | cut -d= -f2- | tr 'A-Z' 'a-z' | tr -c 'a-z_' ' ')"
-hide=" $hide "
+conf="${config_dir:+$config_dir/statusline.conf}"
+if [ -n "$conf" ] && [ -r "$conf" ]; then
+  hide="$hide $(grep -i -m1 '^[[:space:]]*hide[[:space:]]*=' "$conf" 2>/dev/null | cut -d= -f2-)"
+  compact="$compact $(grep -i -m1 '^[[:space:]]*compact[[:space:]]*=' "$conf" 2>/dev/null | cut -d= -f2-)"
+fi
+hide=" $(printf '%s' "$hide" | tr 'A-Z' 'a-z' | tr -c 'a-z_' ' ') "
+compact=" $(printf '%s' "$compact" | tr 'A-Z' 'a-z' | tr -c 'a-z_' ' ') "
 hidden() { case "$hide" in *" $1 "*) return 0 ;; esac; return 1; }
+is_compact() { case "$compact" in *" $1 "*) return 0 ;; esac; return 1; }
 
 cache_dir=""
 if [ -n "$config_dir" ]; then
@@ -443,9 +458,18 @@ fi
 
 # ---- line 1: rate limits + model context usage --------------------------
 
-# A bar, or with `bars` hidden just its label as bold text.
+# A usage figure for section $1: a bar, or for a section set to compact, its
+# label as plain text in the bar's severity colour (grey when unknown).
+# $2 is the integer percentage ("" when unknown), $3 the label.
 bar() {
-  if hidden bars; then printf '\033[1m%s\033[0m' "$3"; else make_bar "$@"; fi
+  local c=245
+  if ! is_compact "$1"; then make_bar "${2:-0}" 12 "$3"; return; fi
+  if is_num "$2"; then
+    c=41
+    [ "$2" -gt 50 ] 2>/dev/null && c=214
+    [ "$2" -ge 85 ] 2>/dev/null && c=196
+  fi
+  printf '\033[1;38;5;%sm%s\033[0m' "$c" "$3"
 }
 
 # Hidden sections are skipped entirely, separators included.
@@ -455,11 +479,11 @@ add1() { line1="${line1:+$line1 $(printf '\033[2m|\033[0m') }$1"; }
 if ! hidden five_hour; then
   if is_num "$five_pct"; then
     five_int=$(printf '%.0f' "$five_pct")
-    part=$(bar "$five_int" 12 "${five_int}%")
+    part=$(bar five_hour "$five_int" "${five_int}%")
   else
-    part=$(bar 0 12 "n/a")
+    part=$(bar five_hour "" "n/a")
   fi
-  hidden reset || part+=" $(fmt_time_of_day "$five_reset")"
+  hidden five_hour_reset || part+=" $(fmt_time_of_day "$five_reset")"
   add1 "$part"
 fi
 
@@ -468,24 +492,26 @@ if ! hidden weekly; then
   hidden icons || part=$(printf '\033[2m🗓️\033[0m ')
   if is_num "$week_pct"; then
     week_int=$(printf '%.0f' "$week_pct")
-    part+=$(bar "$week_int" 12 "${week_int}%")
+    part+=$(bar weekly "$week_int" "${week_int}%")
   else
-    part+=$(bar 0 12 "n/a")
+    part+=$(bar weekly "" "n/a")
   fi
-  hidden reset || part+=" $(fmt_weekday_time "$week_reset")"
+  hidden weekly_reset || part+=" $(fmt_weekday_time "$week_reset")"
   add1 "$part"
 fi
 
-if ! hidden model; then
+part=""
+hidden model_name || part=$(printf '\033[1m%s\033[0m' "$model")
+if ! hidden context; then
   if is_num "$ctx_pct" && is_num "$ctx_used" && is_num "$ctx_size"; then
     ctx_int=$(printf '%.0f' "$ctx_pct")
-    ctx_label="$(fmt_tokens "$ctx_used")/$(fmt_tokens "$ctx_size")"
-    ctx_bar=$(bar "$ctx_int" 12 "$ctx_label")
+    ctx_bar=$(bar context "$ctx_int" "$(fmt_tokens "$ctx_used")/$(fmt_tokens "$ctx_size")")
   else
-    ctx_bar=$(bar 0 12 "n/a")
+    ctx_bar=$(bar context "" "n/a")
   fi
-  add1 "$(printf '\033[1m%s\033[0m %s' "$model" "$ctx_bar")"
+  part="${part:+$part }$ctx_bar"
 fi
+[ -n "$part" ] && add1 "$part"
 
 # ---- account / org label (from ~/.claude.json, not the stdin payload) ----
 # The statusline JSON on stdin has no account/org field; that lives in
@@ -553,9 +579,6 @@ sys.stdout.buffer.write(out.encode("utf-8"))
   fi
 fi
 
-account_part=""
-[ -n "$account_label" ] && account_part=$(printf '\033[38;5;208m%s\033[0m \033[2m·\033[0m ' "$account_label")
-
 # OS username, prefixed onto the project name as "user:project". Falls back
 # to `id -un` if $USER isn't set; if neither yields anything, just the
 # project name is shown (no dangling colon).
@@ -597,13 +620,16 @@ if [ -n "$branch" ]; then
   rm -f "$_st"
 fi
 
-arrow="" branch_icon=""
-hidden icons || { arrow=$(printf '\033[2m⤷\033[0m '); branch_icon=$(printf '\033[2m⎇\033[0m '); }
+# account · user:project ⎇ branch dot, each part optional.
+line2=""
+[ -n "$account_label" ] && line2=$(printf '\033[38;5;208m%s\033[0m' "$account_label")
+hidden project || \
+  line2="${line2:+$line2 $(printf '\033[2m·\033[0m') }$(printf '\033[34m%s\033[0m' "$user_project")"
 if [ -n "$branch" ]; then
-  line2=$(printf '%s%s\033[34m%s\033[0m %s\033[33m%s\033[0m %s' "$arrow" "$account_part" "$user_project" "$branch_icon" "$branch" "$dot")
-else
-  line2=$(printf '%s%s\033[34m%s\033[0m' "$arrow" "$account_part" "$user_project")
+  hidden icons || line2="${line2:+$line2 }$(printf '\033[2m⎇\033[0m')"
+  line2="${line2:+$line2 }$(printf '\033[33m%s\033[0m' "$branch")${dot:+ $dot}"
 fi
+[ -n "$line2" ] && ! hidden icons && line2="$(printf '\033[2m⤷\033[0m') $line2"
 
 # ---- line 3: effort / thinking / output style ----------------------------
 # One consistent colour (blue) across the entire line, rather than mixing

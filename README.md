@@ -31,28 +31,35 @@ the `statusLine` key from `~/.claude/settings.json`.
 ## Customize
 
 **Plugin installs:** `/plugin` → **Installed** → Claude Status Bar →
-**Configure options** (the same toggles also appear in `/config`). Changes
+**Configure options** (the same options also appear in `/config`). Changes
 show within 30 seconds, no restart.
 
-**Any install:** create `statusline.conf` in your Claude config dir (`~/.claude`, or
-`$CLAUDE_CONFIG_DIR`) with one line listing the parts to hide:
+| Option | Values |
+|--------|--------|
+| 5-hour usage | `bar` · `compact` (just `42%`) · `off` |
+| 5-hour reset time | on / off |
+| Weekly usage | `bar` · `compact` · `off` |
+| Weekly reset time | on / off |
+| Model name | on / off |
+| Model context | `bar` · `compact` (just `120k/200k`) · `off` |
+| Account / org | on / off |
+| User and project | on / off |
+| Git branch and dirty status | on / off |
+| Effort line | on / off |
+| Icons | on / off |
+
+Compact values keep the bar's colour: green, then yellow above 50%, red from 85%.
+
+**Any install:** create `statusline.conf` in your Claude config dir
+(`~/.claude`, or `$CLAUDE_CONFIG_DIR`):
 
 ```
-hide=weekly,reset,icons
+hide=weekly_reset,account
+compact=five_hour,context
 ```
 
-| Name | Hides |
-|------|-------|
-| `five_hour` | 5-hour usage bar |
-| `weekly` | weekly usage bar |
-| `model` | model name + context bar |
-| `reset` | reset times |
-| `bars` | the bars themselves (shows plain `42%` instead) |
-| `icons` | all icons |
-| `account` | account / org label |
-| `git` | branch + clean/dirty dot |
-| `effort` | the effort / thinking / style line |
-
+Names: `five_hour`, `five_hour_reset`, `weekly`, `weekly_reset`,
+`model_name`, `context`, `account`, `project`, `git`, `effort`, `icons`.
 Both are honoured together: a part hidden in either place stays hidden.
 
 ## Requirements

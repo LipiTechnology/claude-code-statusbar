@@ -38,7 +38,7 @@ The input schema (stdin JSON) is the contract with Claude Code: `model.display_n
 - **Line 2**: account/org label (redacted) · `user:project` · git branch · clean/dirty dot.
 - **Line 3**: effort / thinking / output style.
 
-Any section can be hidden via the plugin's `userConfig` toggles (`show_<name>` in `plugin.json`; the script reads them straight from `pluginConfigs` in `settings.json`, because option values only reach hooks, not the statusLine command) or via `hide=` in `$config_dir/statusline.conf` (names in README). A new section needs both a `show_` option and a `hidden` check. Use `hidden <name>` when adding a section, and drop its separator too. The file is read with `grep`, never sourced or eval'd, the same as the cache.
+Every section is configurable through the plugin's `userConfig` (`plugin.json`; `bar`/`compact`/`off` strings for the three usage figures, booleans for the rest) or `hide=`/`compact=` in `$config_dir/statusline.conf`. The script reads the plugin values straight from `pluginConfigs` in `settings.json`, because option values only reach hooks, not the statusLine command. The jq and Python readers must stay in sync. A new section needs a `userConfig` entry, a `hidden`/`is_compact` check, and a README row. The conf file is read with `grep`, never sourced or eval'd, the same as the cache.
 
 ## Design constraints (these are load-bearing — preserve them when editing)
 
